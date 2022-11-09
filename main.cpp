@@ -4,21 +4,21 @@
 #include <unistd.h>
 #include <stdexcept>
 #include <iostream>
+#include <semaphore>
+#include <cstring>
 
 const char SHARED_FILE_NAME[] = "_t_timer_shared_file";
 
-// Размер содержимого файла (размер мьютекса + размер атрибутов мьютекса + счетчик)
-const size_t MEMORY_SIZE = sizeof(pthread_mutex_t) + sizeof(pthread_mutexattr_t) + sizeof(unsigned long);
-
+const size_t MEMORY_SIZE = sizeof(unsigned long) + sizeof(sem_t);
 
 class TimerProcessDescriptor {
 public:
-    explicit TimerProcessDescriptor(const char *shared_file_name, const char* process_name) : name(process_name) {
+    explicit TimerProcessDescriptor(const char *shared_file_name, const char *process_name) : name(process_name) {
 
         bool need_to_init = false;
         auto file_descriptor = get_file_descriptor(shared_file_name, need_to_init);
 
-        // Маппим файл в память
+        // Отображаем файл в память
         // Первый адрес - мьютекс, второй атрибуты, третий счетчики
         void *shared_memory_ptr = mmap(
                 nullptr,
@@ -28,48 +28,41 @@ public:
                 file_descriptor,
                 0
         );
+        close(file_descriptor);
 
         /* Инициализация указателей на данные путем последовательного чтения из файла */
+        this->timer_ptr = (unsigned long *) (shared_memory_ptr);
+        this->sem_ptr = (sem_t*) (timer_ptr + sizeof(timer_ptr));
 
-        this->mutex_ptr = static_cast<pthread_mutex_t *>(shared_memory_ptr);
+        if (need_to_init) {
+            sem_init(this->sem_ptr, 1, 1);
+            *timer_ptr = 1;
+        }
 
-        this->mutex_attr_ptr = (pthread_mutexattr_t*)( ((char *)mutex_ptr) + sizeof(pthread_mutex_t) );
-
-        this->timer_ptr = (unsigned long *) ( ((char *)mutex_attr_ptr) + sizeof(pthread_mutexattr_t) );
-
-        if (need_to_init)
-            this->init();
+        if (this->sem_ptr == SEM_FAILED)
+            throw std::runtime_error("Ошибка при открытии семафора!");
     }
 
-    void step(){
-        // Блокируем мьютекс
-        pthread_mutex_lock(mutex_ptr);
+    void step() {
+        sem_wait(sem_ptr);
         for (size_t i = 0; i < 5; i++) {
             sleep(1);
             std::cout << "Таймер: " << name << ". Секунд прошло: " << *timer_ptr << std::endl;
             *timer_ptr += 1;
         }
-        // Разблокируем мьютекс
-        pthread_mutex_unlock(mutex_ptr);
+        sem_post(sem_ptr);
     }
+
 private:
-    pthread_mutex_t* mutex_ptr {nullptr};
-    pthread_mutexattr_t* mutex_attr_ptr {nullptr};
-    unsigned long* timer_ptr {nullptr};
+    sem_t *sem_ptr{nullptr};
+    unsigned long *timer_ptr{nullptr};
     std::string name;
 
-    void init() {
-        pthread_mutexattr_init(mutex_attr_ptr);
-        pthread_mutexattr_setpshared(mutex_attr_ptr, PTHREAD_PROCESS_SHARED);
-        pthread_mutexattr_setprotocol(mutex_attr_ptr, PTHREAD_PRIO_INHERIT);
-        pthread_mutex_init(mutex_ptr, mutex_attr_ptr);
-        *timer_ptr = 1;
-    }
-
     /* Возвращает дескриптор файла общего для нескольких потоков */
-    static int get_file_descriptor(const char* filename, bool &need_to_init_mutex) {
+    static int get_file_descriptor(const char *filename, bool &need_to_init_mutex) {
         // O_EXCL нужен, для того чтобы, если файл уже создан вернуть -1
         int file = open(filename, O_RDWR | O_CREAT | O_EXCL, 0666);
+
         if (file != -1) {
             // Задать размер файла
             ftruncate(file, MEMORY_SIZE);
@@ -91,7 +84,18 @@ int main(int argc, char **argv) {
     // считываем имя таймера
     char *name = argv[1];
 
-    TimerProcessDescriptor process (SHARED_FILE_NAME, name);
+//    if (strcmp(name, "close") == 0){
+//        auto sem_ptr = sem_open(SEMAPHORE_NAME, 0);
+//
+//        if (sem_ptr == SEM_FAILED)
+//            throw std::runtime_error("Ошибка при открытии семафора!");
+//
+//        sem_close(sem_ptr);
+//        std::cout << "Closed!";
+//        return 0;
+//    }
+
+    TimerProcessDescriptor process(SHARED_FILE_NAME, name);
 
     while (true) {
         process.step();
