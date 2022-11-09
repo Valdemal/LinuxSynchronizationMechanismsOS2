@@ -31,7 +31,7 @@ public:
 
         /* Инициализация указателей на данные путем последовательного чтения из файла */
 
-        this->mutex_ptr = static_cast<pthread_mutex_t *>(shared_memory_ptr);
+        this->mutex_ptr = (pthread_mutex_t *)(shared_memory_ptr);
 
         this->mutex_attr_ptr = (pthread_mutexattr_t*)( ((char *)mutex_ptr) + sizeof(pthread_mutex_t) );
 
@@ -60,7 +60,9 @@ private:
 
     void init() {
         pthread_mutexattr_init(mutex_attr_ptr);
+        // Оптимизация использования мьютекса для нескольких процессов
         pthread_mutexattr_setpshared(mutex_attr_ptr, PTHREAD_PROCESS_SHARED);
+        // Установка порядка передачи мьютекса таким образом, чтобы он достался всем
         pthread_mutexattr_setprotocol(mutex_attr_ptr, PTHREAD_PRIO_INHERIT);
         pthread_mutex_init(mutex_ptr, mutex_attr_ptr);
         *timer_ptr = 1;
