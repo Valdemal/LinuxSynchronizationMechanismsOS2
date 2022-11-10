@@ -1,15 +1,13 @@
 #include <fcntl.h>
-#include <pthread.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <stdexcept>
 #include <iostream>
 #include <semaphore>
-#include <cstring>
 
 const char SHARED_FILE_NAME[] = "_t_timer_shared_file";
 
-const size_t MEMORY_SIZE = sizeof(unsigned long) + sizeof(sem_t);
+const size_t MEMORY_SIZE = sizeof(sem_t) +  sizeof(unsigned long);
 
 class TimerProcessDescriptor {
 public:
@@ -19,7 +17,7 @@ public:
         auto file_descriptor = get_file_descriptor(shared_file_name, need_to_init);
 
         // Отображаем файл в память
-        // Первый адрес - мьютекс, второй атрибуты, третий счетчики
+        // Первый адрес - семафор, второй - счетчик
         void *shared_memory_ptr = mmap(
                 nullptr,
                 MEMORY_SIZE,
@@ -31,8 +29,8 @@ public:
         close(file_descriptor);
 
         /* Инициализация указателей на данные путем последовательного чтения из файла */
-        this->timer_ptr = (unsigned long *) (shared_memory_ptr);
-        this->sem_ptr = (sem_t*) (timer_ptr + sizeof(timer_ptr));
+        this->sem_ptr = (sem_t*) (shared_memory_ptr);
+        this->timer_ptr = (unsigned long *) ((char*)shared_memory_ptr + sizeof(sem_t));
 
         if (need_to_init) {
             sem_init(this->sem_ptr, 1, 1);
@@ -51,6 +49,7 @@ public:
             *timer_ptr += 1;
         }
         sem_post(sem_ptr);
+        sleep(1);
     }
 
 private:
@@ -83,17 +82,6 @@ private:
 int main(int argc, char **argv) {
     // считываем имя таймера
     char *name = argv[1];
-
-//    if (strcmp(name, "close") == 0){
-//        auto sem_ptr = sem_open(SEMAPHORE_NAME, 0);
-//
-//        if (sem_ptr == SEM_FAILED)
-//            throw std::runtime_error("Ошибка при открытии семафора!");
-//
-//        sem_close(sem_ptr);
-//        std::cout << "Closed!";
-//        return 0;
-//    }
 
     TimerProcessDescriptor process(SHARED_FILE_NAME, name);
 
